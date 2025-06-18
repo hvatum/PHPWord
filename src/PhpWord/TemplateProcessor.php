@@ -532,6 +532,40 @@ class TemplateProcessor
         }
     }
 
+    public function getSvgDimensions(string $file): array
+    {
+        $xml = @file_get_contents($file);
+        if ($xml === false) {
+            throw new InvalidImageException("Impossible de lire le fichier SVG: $file");
+        }
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        if (!$dom->loadXML($xml)) {
+            throw new InvalidImageException('SVG invalide ou mal formé');
+        }
+        $svg = $dom->documentElement;
+
+        $wAttr = round((float) $svg->getAttribute('width'));
+        $hAttr = round((float) $svg->getAttribute('height'));
+
+        $w = (int) filter_var($wAttr, FILTER_SANITIZE_NUMBER_INT);
+        $h = (int) filter_var($hAttr, FILTER_SANITIZE_NUMBER_INT);
+
+        if ($w <= 0 || $h <= 0) {
+            $vb = $svg->getAttribute('viewBox');
+            if (preg_match('/^\s*[\d.+-]+[\s,]+[\d.+-]+[\s,]+([\d.+-]+)[\s,]+([\d.+-]+)\s*$/', $vb, $m)) {
+                $w = (int) round((float) $m[1]);
+                $h = (int) round((float) $m[2]);
+            }
+        }
+
+        if ($w <= 0 || $h <= 0) {
+            throw new InvalidImageException('Impossible de déterminer width/height ou viewBox valides pour le SVG');
+        }
+
+        return [$w, $h];
+    }
+
     private function prepareImageAttrs($replaceImage, $varInlineArgs)
     {
         // get image path and size
@@ -560,26 +594,35 @@ class TemplateProcessor
             $imgPath = $replaceImage;
         }
 
-        $width = $this->chooseImageDimension($width, $varInlineArgs['width'] ?? null, 115);
-        $height = $this->chooseImageDimension($height, $varInlineArgs['height'] ?? null, 70);
+        $ext = strtolower(pathinfo($imgPath, PATHINFO_EXTENSION));
+        if ($ext === 'svg') {
+            [$width, $height] = $this->getSvgDimensions($imgPath);
 
-        $imageData = @getimagesize($imgPath);
-        if (!is_array($imageData)) {
-            throw new Exception(sprintf('Invalid image: %s', $imgPath));
-        }
-        [$actualWidth, $actualHeight, $imageType] = $imageData;
+            $width = $this->chooseImageDimension($width, $varInlineArgs['width'] ?? null, 115);
+            $height = $this->chooseImageDimension($height, $varInlineArgs['height'] ?? null, 70);
+            $mime = 'image/svg+xml';
+        } else {
+            $width = $this->chooseImageDimension($width, $varInlineArgs['width'] ?? null, 115);
+            $height = $this->chooseImageDimension($height, $varInlineArgs['height'] ?? null, 70);
 
-        // fix aspect ratio (by default)
-        if (null === $ratio && isset($varInlineArgs['ratio'])) {
-            $ratio = $varInlineArgs['ratio'];
-        }
-        if (null === $ratio || !in_array(strtolower($ratio), ['', '-', 'f', 'false'])) {
-            $this->fixImageWidthHeightRatio($width, $height, $actualWidth, $actualHeight);
-        }
+            $imageData = @getimagesize($imgPath);
+            if (!is_array($imageData)) {
+                throw new Exception(sprintf('Invalid image: %s', $imgPath));
+            }
+            [$actualWidth, $actualHeight, $imageType] = $imageData;
 
+            // fix aspect ratio (by default)
+            if (null === $ratio && isset($varInlineArgs['ratio'])) {
+                $ratio = $varInlineArgs['ratio'];
+            }
+            if (null === $ratio || !in_array(strtolower($ratio), ['', '-', 'f', 'false'])) {
+                $this->fixImageWidthHeightRatio($width, $height, $actualWidth, $actualHeight);
+            }
+            $mime = image_type_to_mime_type($imageType);
+        }
         $imageAttrs = [
             'src' => $imgPath,
-            'mime' => image_type_to_mime_type($imageType),
+            'mime' => $mime,
             'width' => $width,
             'height' => $height,
         ];
@@ -599,6 +642,7 @@ class TemplateProcessor
             'image/png' => 'png',
             'image/bmp' => 'bmp',
             'image/gif' => 'gif',
+            'image/svg+xml' => 'svg',
         ];
 
         // get image embed name
@@ -636,6 +680,7 @@ class TemplateProcessor
         $this->tempDocumentRelations[$partFileName] = str_replace('</Relationships>', $xmlImageRelation, $this->tempDocumentRelations[$partFileName]) . '</Relationships>';
     }
 
+
     /**
      * @param mixed $search
      * @param mixed $replace Path to image, or array("path" => xx, "width" => yy, "height" => zz)
@@ -650,6 +695,7 @@ class TemplateProcessor
 
         $replacesList = [];
         if (!is_array($replace) || isset($replace['path'])) {
+            $pathinfo = pathinfo($replace['path']);
             $replacesList[] = $replace;
         } else {
             $replacesList = array_values($replace);
@@ -670,10 +716,52 @@ class TemplateProcessor
         foreach (array_keys($this->tempDocumentFooters) as $footerIndex) {
             $searchParts[$this->getFooterName($footerIndex)] = &$this->tempDocumentFooters[$footerIndex];
         }
+        $isSvg = isset($pathinfo) && $pathinfo['extension'] == 'svg';
 
         // define templates
         // result can be verified via "Open XML SDK 2.5 Productivity Tool" (http://www.microsoft.com/en-us/download/details.aspx?id=30425)
-        $imgTpl = '<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}" stroked="f" filled="f"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>';
+        if ($isSvg) {
+            $imgTpl = '<w:drawing>
+                            <wp:inline xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main">
+                                <wp:extent cx="5715000" cy="1816208"/>
+                                <wp:docPr id="1" name="'.$pathinfo['filename'].'"/>
+                                <wp:cNvGraphicFramePr>
+                                    <a:graphicFrameLocks noChangeAspect="1"/>
+                                </wp:cNvGraphicFramePr>
+                                <a:graphic>
+                                    <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                                        <pic:pic>
+                                            <pic:nvPicPr>
+                                                <pic:cNvPr id="0" name="'.$pathinfo['basename'].'"/>
+                                                <pic:cNvPicPr/>
+                                            </pic:nvPicPr>
+                                            <pic:blipFill>
+                                                <a:blip>
+                                                    <a:extLst>
+                                                        <a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">
+                                                            <asvg:svgBlip r:embed="{RID}"/>
+                                                        </a:ext>
+                                                    </a:extLst>
+                                                </a:blip>
+                                                <a:stretch>
+                                                    <a:fillRect/>
+                                                </a:stretch>
+                                            </pic:blipFill>
+                                            <pic:spPr>
+                                                <a:xfrm>
+                                                    <a:off x="0" y="0"/>
+                                                    <a:ext cx="5715000" cy="1816208"/>
+                                                </a:xfrm>
+                                                <a:prstGeom prst="rect"/>
+                                            </pic:spPr>
+                                        </pic:pic>
+                                    </a:graphicData>
+                                </a:graphic>
+                            </wp:inline>
+                        </w:drawing>';
+        } else {
+                $imgTpl = '<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}" stroked="f" filled="f"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>';
+        }
 
         $i = 0;
         foreach ($searchParts as $partFileName => &$partContent) {
@@ -681,7 +769,7 @@ class TemplateProcessor
 
             foreach ($searchReplace as $searchString => $replaceImage) {
                 $varsToReplace = array_filter($partVariables, function ($partVar) use ($searchString) {
-                    return ($partVar == $searchString) || preg_match('/^' . preg_quote($searchString, '/') . ':/', $partVar);
+                    return ($partVar == $searchString) || preg_match('/^' . preg_quote($searchString) . ':/', $partVar);
                 });
 
                 foreach ($varsToReplace as $varNameWithArgs) {
@@ -700,7 +788,7 @@ class TemplateProcessor
                     // replace variable
                     $varNameWithArgsFixed = static::ensureMacroCompleted($varNameWithArgs);
                     $matches = [];
-                    if (preg_match('/(<[^<]+>)([^<]*)(' . preg_quote($varNameWithArgsFixed, '/') . ')([^>]*)(<[^>]+>)/Uu', $partContent, $matches)) {
+                    if (preg_match('/(<[^<]+>)([^<]*)(' . preg_quote($varNameWithArgsFixed) . ')([^>]*)(<[^>]+>)/Uu', $partContent, $matches)) {
                         $wholeTag = $matches[0];
                         array_shift($matches);
                         [$openTag, $prefix, , $postfix, $closeTag] = $matches;
@@ -716,6 +804,7 @@ class TemplateProcessor
             }
         }
     }
+
 
     /**
      * Returns count of all variables in template.
