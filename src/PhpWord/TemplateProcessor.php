@@ -723,7 +723,7 @@ class TemplateProcessor
         if ($isSvg) {
             $imgTpl = '<w:drawing>
                             <wp:inline xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main">
-                                <wp:extent cx="5715000" cy="1816208"/>
+                                <wp:extent cx="{WIDTH}" cy="{HEIGHT}"/>
                                 <wp:docPr id="1" name="'.$pathinfo['filename'].'"/>
                                 <wp:cNvGraphicFramePr>
                                     <a:graphicFrameLocks noChangeAspect="1"/>
@@ -750,7 +750,7 @@ class TemplateProcessor
                                             <pic:spPr>
                                                 <a:xfrm>
                                                     <a:off x="0" y="0"/>
-                                                    <a:ext cx="5715000" cy="1816208"/>
+                                                    <a:ext cx="{WIDTH}" cy="{HEIGHT}"/>
                                                 </a:xfrm>
                                                 <a:prstGeom prst="rect"/>
                                             </pic:spPr>
