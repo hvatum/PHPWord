@@ -593,33 +593,31 @@ class TemplateProcessor
         } else {
             $imgPath = $replaceImage;
         }
+        $width = $this->chooseImageDimension($width, $varInlineArgs['width'] ?? null, 115);
+
+        $height = $this->chooseImageDimension($height, $varInlineArgs['height'] ?? null, 70);
 
         $ext = strtolower(pathinfo($imgPath, PATHINFO_EXTENSION));
         if ($ext === 'svg') {
-            [$width, $height] = $this->getSvgDimensions($imgPath);
-
-            $width = $this->chooseImageDimension($width, $varInlineArgs['width'] ?? null, 115);
-            $height = $this->chooseImageDimension($height, $varInlineArgs['height'] ?? null, 70);
+            [$actualWidth, $actualHeight] = $this->getSvgDimensions($imgPath);
             $mime = 'image/svg+xml';
         } else {
-            $width = $this->chooseImageDimension($width, $varInlineArgs['width'] ?? null, 115);
-            $height = $this->chooseImageDimension($height, $varInlineArgs['height'] ?? null, 70);
-
             $imageData = @getimagesize($imgPath);
             if (!is_array($imageData)) {
                 throw new Exception(sprintf('Invalid image: %s', $imgPath));
             }
             [$actualWidth, $actualHeight, $imageType] = $imageData;
-
-            // fix aspect ratio (by default)
-            if (null === $ratio && isset($varInlineArgs['ratio'])) {
-                $ratio = $varInlineArgs['ratio'];
-            }
-            if (null === $ratio || !in_array(strtolower($ratio), ['', '-', 'f', 'false'])) {
-                $this->fixImageWidthHeightRatio($width, $height, $actualWidth, $actualHeight);
-            }
             $mime = image_type_to_mime_type($imageType);
         }
+
+        // fix aspect ratio (by default)
+        if (null === $ratio && isset($varInlineArgs['ratio'])) {
+            $ratio = $varInlineArgs['ratio'];
+        }
+        if (null === $ratio || !in_array(strtolower($ratio), ['', '-', 'f', 'false'])) {
+            $this->fixImageWidthHeightRatio($width, $height, $actualWidth, $actualHeight);
+        }
+
         $imageAttrs = [
             'src' => $imgPath,
             'mime' => $mime,
@@ -783,6 +781,10 @@ class TemplateProcessor
 
                     // replace preparations
                     $this->addImageToRelations($partFileName, $rid, $imgPath, $preparedImageAttrs['mime']);
+                    if ($isSvg) {
+                        $preparedImageAttrs['width'] =  \PhpOffice\PhpWord\Shared\Drawing::pixelsToEmu($preparedImageAttrs['width'] );
+                        $preparedImageAttrs['height'] =  \PhpOffice\PhpWord\Shared\Drawing::pixelsToEmu($preparedImageAttrs['height']);
+                    }
                     $xmlImage = str_replace(['{RID}', '{WIDTH}', '{HEIGHT}'], [$rid, $preparedImageAttrs['width'], $preparedImageAttrs['height']], $imgTpl);
 
                     // replace variable
